@@ -4,7 +4,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 
 def main():
-    parse_home_page()
+    pass
 
 def parse_race_card():
     date = "2026/02/01"
@@ -71,7 +71,6 @@ def parse_home_page():
                 data = data[1:]
                 df = pd.DataFrame(data, columns=header_col)
                 df.drop(columns=['排位體重', '賽事重播'],inplace=True)
-                # df.to_excel("data/home_page.xlsx", index=False)
                 
                 indv_matches = []
                 pattern = r'localresults'
@@ -86,6 +85,17 @@ def parse_home_page():
         
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
+
+def create_standard_time_data():
+    """
+    Use this function when standard times are updated.
+    Create an excel file of standard time manually and then uncomment the following codes.
+    Reference: https://racingking.hk/topic/article/54071
+    """
+    pass
+    # df = pd.read_excel("data/standard_time.xlsx")
+    # df.to_csv("data/standard_time.csv", index=False)
+
 
 
 if __name__ == "__main__":
