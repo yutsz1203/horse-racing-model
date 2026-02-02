@@ -1,4 +1,4 @@
-race_course,type,distance,class,total_time,first_sec,second_sec,third_sec,fourth_sec,fifth_sec,sixith_sec
+race_course,type,distance,class,total_time,first_sec,second_sec,third_sec,fourth_sec,fifth_sec,sixth_sec
 ST,grass,1000,0,0.55.90,13.05,20.6,22.25,0.0,0.0,0.0
 ST,grass,1000,2,0.56.05,13.1,20.6,22.35,0.0,0.0,0.0
 ST,grass,1000,3,0.56.45,13.05,20.65,22.75,0.0,0.0,0.0
