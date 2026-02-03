@@ -121,7 +121,8 @@ def main():
                 df["完成時間"] = df["完成時間"].apply(parse_time)
                 df["該仗步速"] = df["該仗步速"].apply(parse_time)
 
-                col_indices = (df["last_section_idx"] + 26).astype(int).values
+                col_indices = (df["last_section_idx"] + 28).astype(int).values
+
                 row_indices = np.arange(len(df))
                 df["該仗頭段"] = round(df["完成時間"] - df["該仗末段"], 2)
                 df["比標準頭段"] = round(
