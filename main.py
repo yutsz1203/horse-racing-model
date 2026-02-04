@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 CHINESE_CHAR = re.compile(r"[^\u4e00-\u9fa5\u3006\u3007]+")
 BASE_URL = "https://racing.hkjc.com"
+SEASON_START_DATE = pd.Timestamp("2025-09-07")
 
 idx_map = {
     "1000": 2,
@@ -40,11 +41,13 @@ def main():
     racecourse = input("Input racecourse (ST/HV): ")
     total_race = input("Input total number of matches: ")
 
-    for rn in range(6, int(total_race) + 1):
+    for rn in range(1, int(total_race) + 1):
         raceno = str(rn)
         home_pages, racecard_df, track, dist = parse_race_card(date, racecourse, raceno)
 
-        # racecard_df fields = 馬匹編號           6次近績    馬名   負磅        騎師  檔位   練馬師  評分 評分+/-  排位體重 排位體重+/-     最佳時間 馬齡 上賽距今日數     配備
+        print(
+            f"Processing race no. {raceno}, {dist}m match on {date} at {racecourse}..."
+        )
 
         Path(f"data/{formatted_date}").mkdir(parents=True, exist_ok=True)
         Path(f"data/{formatted_date}/{raceno}").mkdir(exist_ok=True)
@@ -111,6 +114,7 @@ def main():
                 standard_time_df = standard_time_df.astype(
                     {"class": "str", "distance": "str"}
                 )
+
                 df = df.merge(
                     standard_time_df,
                     left_on=["賽事班次", "馬場", "途程", "跑道"],
@@ -181,16 +185,16 @@ def main():
                     ]
                 ]
                 df.dropna(inplace=True)
-                df.to_csv(
-                    f"data/{''.join(date.split("/"))}/{raceno}/{horse}.csv", index=False
+                df["日期"] = pd.to_datetime(
+                    df["日期"], dayfirst=True, format="%d/%m/%Y"
                 )
+                df.set_index("日期", inplace=True)
+                df.to_csv(f"data/{''.join(date.split("/"))}/{raceno}/{horse}.csv")
 
         final_df, avg_df = concat_df(
-            Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 3
+            Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 2
         )
-        final_df.to_csv(
-            f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv", index=False
-        )
+        final_df.to_csv(f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv")
         avg_df.to_csv(
             f"{Path(f"data/{formatted_date}/final")}/{raceno}_avg.csv", index=False
         )
@@ -398,18 +402,21 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
     avg = []
 
     for file_path in dir.glob("*.csv"):
-        tmp_df = pd.read_csv(file_path)
+        tmp_df = pd.read_csv(file_path, index_col=0, parse_dates=True)
         cond = (
-            (tmp_df["馬場"] == racecourse)
+            (tmp_df.index >= SEASON_START_DATE)
+            & (tmp_df["馬場"] == racecourse)
             & (tmp_df["跑道"] == track)
             & (tmp_df["途程"] == dist)
         )
         filtered_df = tmp_df.loc[cond]
 
         if not filtered_df.empty:
+            filtered_df.sort_values(by="比標準時間", inplace=True)
             filtered_df = filtered_df.iloc[: min(recent_x, len(filtered_df))]
             avg.append(
                 {
+                    "馬匹編號": filtered_df["馬匹編號"].values[0],
                     "馬名": filtered_df["馬名"].values[0],
                     "完成時間": filtered_df["完成時間"].mean().round(2),
                 }
@@ -417,7 +424,7 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
             all_dfs.append(filtered_df)
 
     if all_dfs:
-        final_df = pd.concat(all_dfs, ignore_index=True)
+        final_df = pd.concat(all_dfs)
         final_df.sort_values(by="比標準時間", inplace=True)
 
         avg_df = pd.DataFrame(avg)
