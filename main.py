@@ -41,7 +41,7 @@ def main():
     racecourse = input("Input racecourse (ST/HV): ")
     total_race = input("Input total number of matches: ")
 
-    for rn in range(1, int(total_race) + 1):
+    for rn in range(8, int(total_race) + 1):
         raceno = str(rn)
         home_pages, racecard_df, track, dist = parse_race_card(date, racecourse, raceno)
 
@@ -121,6 +121,7 @@ def main():
                     right_on=["class", "race_course", "distance", "type"],
                     how="left",
                 )
+                df.dropna(inplace=True)
                 df["last_section_idx"] = df["途程"].map(idx_map)
                 df["完成時間"] = df["完成時間"].apply(parse_time)
                 df["該仗步速"] = df["該仗步速"].apply(parse_time)
@@ -184,7 +185,6 @@ def main():
                         "今仗負磅",
                     ]
                 ]
-                df.dropna(inplace=True)
                 df["日期"] = pd.to_datetime(
                     df["日期"], dayfirst=True, format="%d/%m/%Y"
                 )
@@ -214,8 +214,12 @@ def parse_race_card(date, racecourse, raceno):
 
             info_box = soup.find(class_="f_fs13")
             info = info_box.text.split(",")
-            track_info = track_translate[info[3][-2:]]
-            dist_info = int(info[5][1:5])
+            if len(info[3]) == 8:  # turf
+                track_info = track_translate[info[3][-2:]]
+                dist_info = int(info[5][1:5])
+            else:  # AWT
+                track_info = track_translate[info[3][6:9]]
+                dist_info = int(info[4][1:5])
 
             racecard = soup.find(class_="starter f_tac f_fs13 draggable hiddenable")
             pattern = r"horse"
@@ -425,7 +429,7 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
 
     if all_dfs:
         final_df = pd.concat(all_dfs)
-        final_df.sort_values(by="比標準時間", inplace=True)
+        final_df.sort_values(by=["完成時間", "比標準時間"], inplace=True)
 
         avg_df = pd.DataFrame(avg)
         avg_df.sort_values(by="完成時間", inplace=True)
