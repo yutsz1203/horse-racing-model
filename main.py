@@ -41,7 +41,7 @@ def main():
     racecourse = input("Input racecourse (ST/HV): ")
     total_race = input("Input total number of matches: ")
 
-    for rn in range(8, int(total_race) + 1):
+    for rn in range(1, int(total_race) + 1):
         raceno = str(rn)
         home_pages, racecard_df, track, dist = parse_race_card(date, racecourse, raceno)
 
@@ -416,8 +416,9 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
         filtered_df = tmp_df.loc[cond]
 
         if not filtered_df.empty:
-            filtered_df.sort_values(by="比標準時間", inplace=True)
+            filtered_df.sort_index(ascending=False, inplace=True)
             filtered_df = filtered_df.iloc[: min(recent_x, len(filtered_df))]
+            filtered_df.sort_values(by="比標準時間", inplace=True)
             avg.append(
                 {
                     "馬匹編號": filtered_df["馬匹編號"].values[0],
