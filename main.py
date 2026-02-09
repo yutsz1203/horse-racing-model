@@ -1,4 +1,5 @@
 import re
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +28,7 @@ track_translate = {"草地": "grass", "全天候": "dirt"}
 
 
 def main():
+    start_time = time.perf_counter()
     """
     1. Prompt user to input racedate, racecourse, and total no. of races
     2. For each of the race, parse_race_card to get home pages and race df
@@ -200,6 +202,8 @@ def main():
         )
         # print(final_df.head())
         # print(avg_df.head())
+    end_time = time.perf_counter()
+    print(f"Time elapsed: {round((end_time - start_time) / 60, 2)} mins")
 
 
 def parse_race_card(date, racecourse, raceno):
