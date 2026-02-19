@@ -10,8 +10,7 @@ from bs4 import BeautifulSoup
 
 CHINESE_CHAR = re.compile(r"[^\u4e00-\u9fa5\u3006\u3007]+")
 BASE_URL = "https://racing.hkjc.com"
-SEASON_START_DATE = pd.Timestamp("2025-09-07")
-
+DESIRED_PERIOD = pd.Timestamp.today() - pd.DateOffset(months=4)
 idx_map = {
     "1000": 2,
     "1200": 2,
@@ -43,6 +42,13 @@ def main():
     racecourse = input("Input racecourse (ST/HV): ")
     total_race = input("Input total number of matches: ")
 
+    avg_horses_list, fastest_horses_list, diff_horses_list, overlaps_list = (
+        [],
+        [],
+        [],
+        [],
+    )
+
     for rn in range(1, int(total_race) + 1):
         raceno = str(rn)
         home_pages, racecard_df, track, dist = parse_race_card(date, racecourse, raceno)
@@ -58,6 +64,9 @@ def main():
         for home_page, horse, horseno in zip(
             home_pages, racecard_df["馬名"].values, racecard_df["馬匹編號"].values
         ):
+            continue
+            if "退出" in horse:
+                continue
             print(f"Processing {horse} match history...")
             indv_matches, indv_df = parse_home_page(home_page)
             if indv_matches:
@@ -193,17 +202,47 @@ def main():
                 df.set_index("日期", inplace=True)
                 df.to_csv(f"data/{''.join(date.split("/"))}/{raceno}/{horse}.csv")
 
-        final_df, avg_df = concat_df(
+        final_df, avg_df, standard_diff_df = concat_df(
             Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 2
         )
         final_df.to_csv(f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv")
         avg_df.to_csv(
             f"{Path(f"data/{formatted_date}/final")}/{raceno}_avg.csv", index=False
         )
+        standard_diff_df.to_csv(
+            f"{Path(f"data/{formatted_date}/final")}/{raceno}_diff.csv", index=False
+        )
         # print(final_df.head())
         # print(avg_df.head())
+        # print(standard_diff_df.head())
+
+        fastest_horses = final_df["馬匹編號"].to_list()[:4]
+        avg_horses = avg_df["馬匹編號"].to_list()[:4]
+        diff_horses = standard_diff_df["馬匹編號"].to_list()[:4]
+        overlaps = set(fastest_horses) & set(avg_horses) & set(diff_horses)
+
+        avg_horses_list.append(", ".join(map(str, avg_horses)))
+        fastest_horses_list.append(", ".join(map(str, fastest_horses)))
+        diff_horses_list.append(", ".join(map(str, diff_horses)))
+        overlaps_list.append(", ".join(map(str, list(overlaps))))
+
     end_time = time.perf_counter()
     print(f"Time elapsed: {round((end_time - start_time) / 60, 2)} mins")
+
+    data = {
+        "Raceno": list(range(1, int(total_race) + 1)),
+        "Average": avg_horses_list,
+        "Fastest": fastest_horses_list,
+        "Standard Diff": diff_horses_list,
+        "Overlaps": overlaps_list,
+        "最終排名": None,
+        "入位率": None,
+        "Note": None,
+    }
+    summary_df = pd.DataFrame(data)
+    summary_df = summary_df.set_index("Raceno")
+    print(f"Summary for the {total_race} races on {date} at {racecourse}:")
+    print(summary_df.to_markdown())
 
 
 def parse_race_card(date, racecourse, raceno):
@@ -408,11 +447,12 @@ def create_standard_time_data():
 def concat_df(dir: Path, racecourse, dist, track, recent_x):
     all_dfs = []
     avg = []
+    standard_diffs = []
 
     for file_path in dir.glob("*.csv"):
         tmp_df = pd.read_csv(file_path, index_col=0, parse_dates=True)
         cond = (
-            (tmp_df.index >= SEASON_START_DATE)
+            (tmp_df.index >= DESIRED_PERIOD)
             & (tmp_df["馬場"] == racecourse)
             & (tmp_df["跑道"] == track)
             & (tmp_df["途程"] == dist)
@@ -430,19 +470,33 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
                     "完成時間": filtered_df["完成時間"].mean().round(2),
                 }
             )
-            all_dfs.append(filtered_df)
+
+        all_dfs.append(filtered_df)
+        standard_diff_tmp_df = tmp_df.loc[tmp_df.index >= DESIRED_PERIOD]
+        if not standard_diff_tmp_df.empty:
+            standard_diffs.append(
+                {
+                    "馬匹編號": standard_diff_tmp_df["馬匹編號"].values[0],
+                    "馬名": standard_diff_tmp_df["馬名"].values[0],
+                    "平均比標準時間": standard_diff_tmp_df["比標準時間"]
+                    .mean()
+                    .round(2),
+                }
+            )
 
     if all_dfs:
         final_df = pd.concat(all_dfs)
         final_df.sort_values(by=["完成時間", "比標準時間"], inplace=True)
-
-        avg_df = pd.DataFrame(avg)
-        avg_df.sort_values(by="完成時間", inplace=True)
     else:
         final_df = pd.DataFrame()
-        avg_df = pd.DataFrame()
 
-    return final_df, avg_df
+    avg_df = pd.DataFrame(avg)
+    avg_df.sort_values(by="完成時間", inplace=True)
+
+    standard_diff_df = pd.DataFrame(standard_diffs)
+    standard_diff_df.sort_values(by=["平均比標準時間"], inplace=True)
+
+    return final_df, avg_df, standard_diff_df
 
 
 if __name__ == "__main__":
