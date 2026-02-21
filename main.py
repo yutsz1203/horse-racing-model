@@ -3,6 +3,8 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import asyncio
+import aiohttp
 import numpy as np
 import pandas as pd
 import requests
@@ -26,211 +28,190 @@ idx_map = {
 track_translate = {"草地": "grass", "全天候": "dirt"}
 
 
-def main():
-    start_time = time.perf_counter()
-    """
-    1. Prompt user to input racedate, racecourse, and total no. of races
-    2. For each of the race, parse_race_card to get home pages and race df
-    3. For each of the home page (horse), get indv match pages
-    4. For each of the indv match, parse the sectional time page
-    5. Combine all information and build df for each horse with their race history
-    6. Build final df that shows last x match of each of the horses with the same distance and racecourse
-    """
-    # "2026/02/04"
-    date = input("Input race date in this format (yyyy/mm/dd): ")
-    formatted_date = "".join(date.split("/"))
-    racecourse = input("Input racecourse (ST/HV): ")
-    total_race = input("Input total number of matches: ")
+async def main(date, total_race, racecourse):
+    async with aiohttp.ClientSession() as session:
 
-    avg_horses_list, fastest_horses_list, diff_horses_list, overlaps_list = (
-        [],
-        [],
-        [],
-        [],
-    )
+        formatted_date = "".join(date.split("/"))
 
-    for rn in range(1, int(total_race) + 1):
-        raceno = str(rn)
-        home_pages, racecard_df, track, dist = parse_race_card(date, racecourse, raceno)
+        race_card_tasks = [
+            fetch_race_card(session, date, raceno, racecourse)
+            for raceno in range(1, total_race + 1)
+        ]
+        race_card_results = await asyncio.gather(*race_card_tasks)
+        all_home_pages, all_racecard_df, all_track, all_dist = zip(*race_card_results)
 
-        print(
-            f"Processing race no. {raceno}, {dist}m match on {date} at {racecourse}..."
-        )
+        raceno = 1
+        for home_pages, racecard_df in zip(all_home_pages, all_racecard_df):
+            home_page_tasks = [
+                fetch_home_page(session, home_page) for home_page in home_pages
+            ]
+            home_page_results = await asyncio.gather(*home_page_tasks)
 
-        Path(f"data/{formatted_date}").mkdir(parents=True, exist_ok=True)
-        Path(f"data/{formatted_date}/{raceno}").mkdir(exist_ok=True)
-        Path(f"data/{formatted_date}/final").mkdir(exist_ok=True)
+            all_indv_matches, all_indv_df = zip(*home_page_results)
 
-        for home_page, horse, horseno in zip(
-            home_pages, racecard_df["馬名"].values, racecard_df["馬匹編號"].values
-        ):
-            continue
-            if "退出" in horse:
-                continue
-            print(f"Processing {horse} match history...")
-            indv_matches, indv_df = parse_home_page(home_page)
-            if indv_matches:
-                df = indv_df.copy()
-                df.drop(
-                    columns=["評分", "練馬師", "頭馬距離", "獨贏賠率", "配備"],
-                    inplace=True,
-                )
+            for horse, horseno, indv_matches, indv_df in zip(
+                racecard_df["馬名"].values,
+                racecard_df["馬匹編號"].values,
+                all_indv_matches,
+                all_indv_df,
+            ):
+                if "退出" in horse:
+                    continue
 
-                for indv_match in indv_matches:
-                    parsed_url = urlparse(indv_match)
-                    params = parse_qs(parsed_url.query)
+                print(f"Processing {horse} match history...")
 
-                    racedate = params.get("racedate", [None])[0]
-                    past_raceno = params.get("RaceNo", [None])[0]
-
-                    yr, mth, day = racedate.split("/")
-                    racedate_formatted = f"{day}/{mth}/{yr}"
-
-                    print(f"Processing the match on {racedate}")
-
-                    distance, pace, top_3, last_section_time = parse_sectional_time(
-                        horse, racedate_formatted, past_raceno
+                if indv_matches:
+                    df = indv_df.copy()
+                    df.drop(
+                        columns=["評分", "練馬師", "頭馬距離", "獨贏賠率", "配備"],
+                        inplace=True,
                     )
-                    racedate_idx = pd.to_datetime(racedate_formatted, format="%d/%m/%Y")
-                    df.loc[racedate_idx, "日期"] = racedate_formatted
-                    df.loc[racedate_idx, "該仗步速"] = pace
-                    df.loc[racedate_idx, "第一名"] = top_3[0]
-                    df.loc[racedate_idx, "第二名"] = top_3[1]
-                    df.loc[racedate_idx, "第三名"] = top_3[2]
-                    df.loc[racedate_idx, "該仗末段"] = last_section_time
-
-                df["馬名"] = horse
-                df["馬匹編號"] = horseno
-                df["今仗檔位"] = racecard_df.loc[
-                    racecard_df["馬名"] == horse, "檔位"
-                ].iloc[0]
-                df["今仗騎師"] = racecard_df.loc[
-                    racecard_df["馬名"] == horse, "騎師"
-                ].iloc[0]
-                df["今仗負磅"] = racecard_df.loc[
-                    racecard_df["馬名"] == horse, "負磅"
-                ].iloc[0]
-
-                df.loc[df["馬場/跑道/賽道"].str.contains("跑馬地"), "馬場"] = "HV"
-                df.loc[df["馬場/跑道/賽道"].str.contains("沙田"), "馬場"] = "ST"
-                df.loc[df["馬場/跑道/賽道"].str.contains("草地"), "跑道"] = "grass"
-                df.loc[df["馬場/跑道/賽道"].str.contains("全天候"), "跑道"] = "dirt"
-
-                df.loc[df["賽事班次"].str.contains("G"), "賽事班次"] = "0"
-
-                standard_time_df = pd.read_csv("data/standard_time.csv")
-                standard_time_df["total_time"] = standard_time_df["total_time"].apply(
-                    parse_time
-                )
-                standard_time_df = standard_time_df.astype(
-                    {"class": "str", "distance": "str"}
-                )
-
-                df = df.merge(
-                    standard_time_df,
-                    left_on=["賽事班次", "馬場", "途程", "跑道"],
-                    right_on=["class", "race_course", "distance", "type"],
-                    how="left",
-                )
-                df.dropna(inplace=True)
-                df["last_section_idx"] = df["途程"].map(idx_map)
-                df["完成時間"] = df["完成時間"].apply(parse_time)
-                df["該仗步速"] = df["該仗步速"].apply(parse_time)
-
-                col_indices = (df["last_section_idx"] + 28).astype(int).values
-
-                row_indices = np.arange(len(df))
-                df["該仗頭段"] = round(df["完成時間"] - df["該仗末段"], 2)
-                df["比標準頭段"] = round(
-                    df["該仗頭段"]
-                    - (df["total_time"] - df.values[row_indices, col_indices]),
-                    2,
-                )
-                df["比標準末段"] = round(
-                    df["該仗末段"] - df.values[row_indices, col_indices], 2
-                )
-                df["比標準時間"] = round(df["完成時間"] - df["total_time"], 2)
-
-                cols_to_drop = list(standard_time_df.columns) + [
-                    "last_section_idx",
-                ]
-                df.drop(
-                    columns=cols_to_drop,
-                    inplace=True,
-                )
-                df = df.rename(
-                    columns={
-                        "檔位": "上仗檔位",
-                        "騎師": "上仗騎師",
-                        "實際負磅": "上仗負磅",
-                    }
-                )
-                df = df[
-                    [
-                        "馬場",
-                        "跑道",
-                        "場地狀況",
-                        "途程",
-                        "場次",
-                        "日期",
-                        "名次",
-                        "馬名",
-                        "馬匹編號",
-                        "今仗檔位",
-                        "上仗檔位",
-                        "該仗步速",
-                        "該仗頭段",
-                        "比標準頭段",
-                        "該仗末段",
-                        "比標準末段",
-                        "完成時間",
-                        "比標準時間",
-                        "沿途走位",
-                        "第一名",
-                        "第二名",
-                        "第三名",
-                        "上仗騎師",
-                        "今仗騎師",
-                        "賽事班次",
-                        "上仗負磅",
-                        "今仗負磅",
+                    sectional_time_tasks = [
+                        fetch_sectional_time(session, indv_match, horse, df)
+                        for indv_match in indv_matches
                     ]
-                ]
-                df["日期"] = pd.to_datetime(
-                    df["日期"], dayfirst=True, format="%d/%m/%Y"
-                )
-                df.set_index("日期", inplace=True)
-                df.to_csv(f"data/{''.join(date.split("/"))}/{raceno}/{horse}.csv")
+                    sectional_time_result = await asyncio.gather(*sectional_time_tasks)
 
-        final_df, avg_df, standard_diff_df = concat_df(
-            Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 2
+                    df = sectional_time_result[0]
+
+                    df["馬名"] = horse
+                    df["馬匹編號"] = horseno
+                    df["今仗檔位"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "檔位"
+                    ].iloc[0]
+                    df["今仗騎師"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "騎師"
+                    ].iloc[0]
+                    df["今仗負磅"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "負磅"
+                    ].iloc[0]
+
+                    df.loc[df["馬場/跑道/賽道"].str.contains("跑馬地"), "馬場"] = "HV"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("沙田"), "馬場"] = "ST"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("草地"), "跑道"] = "grass"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("全天候"), "跑道"] = "dirt"
+
+                    df.loc[df["賽事班次"].str.contains("G"), "賽事班次"] = "0"
+
+                    standard_time_df = pd.read_csv("data/standard_time.csv")
+                    standard_time_df["total_time"] = standard_time_df[
+                        "total_time"
+                    ].apply(parse_time)
+                    standard_time_df = standard_time_df.astype(
+                        {"class": "str", "distance": "str"}
+                    )
+
+                    df = df.merge(
+                        standard_time_df,
+                        left_on=["賽事班次", "馬場", "途程", "跑道"],
+                        right_on=["class", "race_course", "distance", "type"],
+                        how="left",
+                    )
+                    df.dropna(inplace=True)
+                    df["last_section_idx"] = df["途程"].map(idx_map)
+                    df["完成時間"] = df["完成時間"].apply(parse_time)
+                    df["該仗步速"] = df["該仗步速"].apply(parse_time)
+
+                    col_indices = (df["last_section_idx"] + 28).astype(int).values
+
+                    row_indices = np.arange(len(df))
+                    df["該仗頭段"] = round(df["完成時間"] - df["該仗末段"], 2)
+                    df["比標準頭段"] = round(
+                        df["該仗頭段"]
+                        - (df["total_time"] - df.values[row_indices, col_indices]),
+                        2,
+                    )
+                    df["比標準末段"] = round(
+                        df["該仗末段"] - df.values[row_indices, col_indices], 2
+                    )
+                    df["比標準時間"] = round(df["完成時間"] - df["total_time"], 2)
+
+                    cols_to_drop = list(standard_time_df.columns) + [
+                        "last_section_idx",
+                    ]
+                    df.drop(
+                        columns=cols_to_drop,
+                        inplace=True,
+                    )
+                    df = df.rename(
+                        columns={
+                            "檔位": "上仗檔位",
+                            "騎師": "上仗騎師",
+                            "實際負磅": "上仗負磅",
+                        }
+                    )
+                    df = df[
+                        [
+                            "馬場",
+                            "跑道",
+                            "場地狀況",
+                            "途程",
+                            "場次",
+                            "日期",
+                            "名次",
+                            "馬名",
+                            "馬匹編號",
+                            "今仗檔位",
+                            "上仗檔位",
+                            "該仗步速",
+                            "該仗頭段",
+                            "比標準頭段",
+                            "該仗末段",
+                            "比標準末段",
+                            "完成時間",
+                            "比標準時間",
+                            "沿途走位",
+                            "第一名",
+                            "第二名",
+                            "第三名",
+                            "上仗騎師",
+                            "今仗騎師",
+                            "賽事班次",
+                            "上仗負磅",
+                            "今仗負磅",
+                        ]
+                    ]
+                    df["日期"] = pd.to_datetime(
+                        df["日期"], dayfirst=True, format="%d/%m/%Y"
+                    )
+                    df.set_index("日期", inplace=True)
+                    df.to_csv(f"data/{formatted_date}/{raceno}/{horse}.csv")
+
+            raceno += 1
+
+        avg_horses_list, fastest_horses_list, diff_horses_list, overlaps_list = (
+            [],
+            [],
+            [],
+            [],
         )
-        final_df.to_csv(f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv")
-        avg_df.to_csv(
-            f"{Path(f"data/{formatted_date}/final")}/{raceno}_avg.csv", index=False
-        )
-        standard_diff_df.to_csv(
-            f"{Path(f"data/{formatted_date}/final")}/{raceno}_diff.csv", index=False
-        )
-        # print(final_df.head())
-        # print(avg_df.head())
-        # print(standard_diff_df.head())
 
-        fastest_horses = final_df["馬匹編號"].to_list()[:4]
-        avg_horses = avg_df["馬匹編號"].to_list()[:4]
-        diff_horses = standard_diff_df["馬匹編號"].to_list()[:4]
-        overlaps = set(fastest_horses) & set(avg_horses) & set(diff_horses)
+        for raceno, (dist, track) in enumerate(zip(all_dist, all_track), start=1):
+            final_df, avg_df, standard_diff_df = concat_df(
+                Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 2
+            )
+            final_df.to_csv(
+                f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv"
+            )
+            avg_df.to_csv(
+                f"{Path(f"data/{formatted_date}/final")}/{raceno}_avg.csv", index=False
+            )
+            standard_diff_df.to_csv(
+                f"{Path(f"data/{formatted_date}/final")}/{raceno}_diff.csv", index=False
+            )
 
-        avg_horses_list.append(", ".join(map(str, avg_horses)))
-        fastest_horses_list.append(", ".join(map(str, fastest_horses)))
-        diff_horses_list.append(", ".join(map(str, diff_horses)))
-        overlaps_list.append(", ".join(map(str, list(overlaps))))
+            fastest_horses = final_df["馬匹編號"].to_list()[:4]
+            avg_horses = avg_df["馬匹編號"].to_list()[:4]
+            diff_horses = standard_diff_df["馬匹編號"].to_list()[:4]
+            overlaps = set(fastest_horses) & set(avg_horses) & set(diff_horses)
 
-    end_time = time.perf_counter()
-    print(f"Time elapsed: {round((end_time - start_time) / 60, 2)} mins")
+            avg_horses_list.append(", ".join(map(str, avg_horses)))
+            fastest_horses_list.append(", ".join(map(str, fastest_horses)))
+            diff_horses_list.append(", ".join(map(str, diff_horses)))
+            overlaps_list.append(", ".join(map(str, list(overlaps))))
 
     data = {
-        "Raceno": list(range(1, int(total_race) + 1)),
+        "Raceno": list(range(1, total_race + 1)),
         "Average": avg_horses_list,
         "Fastest": fastest_horses_list,
         "Standard Diff": diff_horses_list,
@@ -245,14 +226,12 @@ def main():
     print(summary_df.to_markdown())
 
 
-def parse_race_card(date, racecourse, raceno):
+async def fetch_race_card(session, date, raceno, racecourse):
     url = f"https://racing.hkjc.com/zh-hk/local/information/racecard?racedate={date}&Racecourse={racecourse}&RaceNo={raceno}"
 
     try:
-        response = requests.get(url)
-
-        if response.status_code == 200:
-            content = response.text
+        async with session.get(url) as response:
+            content = await response.text()
             soup = BeautifulSoup(content, "lxml")
 
             info_box = soup.find(class_="f_fs13")
@@ -306,23 +285,18 @@ def parse_race_card(date, racecourse, raceno):
                     ],
                     inplace=True,
                 )
-                # df.to_excel(f"data/{date.replace("/", "")}_{racecourse}_{race_no}.xlsx", index=False)
-        else:
-            print("Failed to retrieve the contents.")
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
 
     return home_pages, df, track_info, dist_info
 
 
-def parse_home_page(home_page):
+async def fetch_home_page(session, home_page):
     url = f"{BASE_URL}{home_page}"
 
     try:
-        response = requests.get(url)
-
-        if response.status_code == 200:
-            content = response.text
+        async with session.get(url) as response:
+            content = await response.text()
             soup = BeautifulSoup(content, "lxml")
             results = soup.find(class_="bigborder")
             if results:
@@ -349,22 +323,28 @@ def parse_home_page(home_page):
                     if re.search(pattern, indv_match):
                         indv_matches.append(indv_match)
 
-        else:
-            print("Failed to retrieve the contents.")
-
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
 
     return indv_matches, df
 
 
-def parse_sectional_time(target, racedate, raceno):
-    url = f"{BASE_URL}/zh-hk/local/information/displaysectionaltime?racedate={racedate}&RaceNo={raceno}"
-    try:
-        response = requests.get(url)
+async def fetch_sectional_time(session, indv_match, target, df):
+    parsed_url = urlparse(indv_match)
+    params = parse_qs(parsed_url.query)
 
-        if response.status_code == 200:
-            content = response.text
+    racedate = params.get("racedate", [None])[0]
+    past_raceno = params.get("RaceNo", [None])[0]
+
+    yr, mth, day = racedate.split("/")
+    racedate_formatted = f"{day}/{mth}/{yr}"
+
+    print(f"Processing the match on {racedate_formatted}")
+
+    url = f"{BASE_URL}/zh-hk/local/information/displaysectionaltime?racedate={racedate_formatted}&RaceNo={past_raceno}"
+    try:
+        async with session.get(url) as response:
+            content = await response.text()
             soup = BeautifulSoup(content, "lxml")
             general = soup.find(class_="f_tac f_fl f_fs13")
             if general:
@@ -405,13 +385,18 @@ def parse_sectional_time(target, racedate, raceno):
                             else:
                                 last_section_time = None
 
-        else:
-            print("Failed to retrieve the contents.")
-
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
 
-    return distance, pace, top_3, last_section_time
+    racedate_idx = pd.to_datetime(racedate_formatted, format="%d/%m/%Y")
+    df.loc[racedate_idx, "日期"] = racedate_formatted
+    df.loc[racedate_idx, "該仗步速"] = pace
+    df.loc[racedate_idx, "第一名"] = top_3[0]
+    df.loc[racedate_idx, "第二名"] = top_3[1]
+    df.loc[racedate_idx, "第三名"] = top_3[2]
+    df.loc[racedate_idx, "該仗末段"] = last_section_time
+
+    return df
 
 
 def parse_time(time_str):
@@ -500,4 +485,18 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
 
 
 if __name__ == "__main__":
-    main()
+    date = input("Input race date in this format (yyyy/mm/dd): ")  # eg. "2026/02/04"
+    formatted_date = "".join(date.split("/"))
+    racecourse = input("Input racecourse (ST/HV): ")
+    total_race = int(input("Input total number of matches: "))
+
+    Path(f"data/{formatted_date}").mkdir(parents=True, exist_ok=True)
+    Path(f"data/{formatted_date}/final").mkdir(exist_ok=True)
+
+    for raceno in range(1, total_race + 1):
+        Path(f"data/{formatted_date}/{raceno}").mkdir(exist_ok=True)
+
+    t1 = time.perf_counter()
+    asyncio.run(main(date, total_race, racecourse))
+    t2 = time.perf_counter()
+    print(f"Time elapsed: {(t2-t1)/60 :.2f} mins")
