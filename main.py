@@ -12,7 +12,9 @@ from bs4 import BeautifulSoup
 
 CHINESE_CHAR = re.compile(r"[^\u4e00-\u9fa5\u3006\u3007]+")
 BASE_URL = "https://racing.hkjc.com"
-DESIRED_PERIOD = pd.Timestamp.today() - pd.DateOffset(months=4)
+DESIRED_PERIOD = pd.Timestamp.today() - pd.DateOffset(
+    months=4
+)  # adjust the desired period when new season begins
 idx_map = {
     "1000": 2,
     "1200": 2,
@@ -188,7 +190,7 @@ async def main(date, total_race, racecourse):
 
         for raceno, (dist, track) in enumerate(zip(all_dist, all_track), start=1):
             final_df, avg_df, standard_diff_df = concat_df(
-                Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 2
+                Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 3
             )
             final_df.to_csv(
                 f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv"
@@ -438,6 +440,7 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
         tmp_df = pd.read_csv(file_path, index_col=0, parse_dates=True)
         cond = (
             (tmp_df.index >= DESIRED_PERIOD)
+            & (tmp_df.index != pd.Timestamp.today().normalize())
             & (tmp_df["馬場"] == racecourse)
             & (tmp_df["跑道"] == track)
             & (tmp_df["途程"] == dist)
@@ -457,8 +460,15 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
             )
 
         all_dfs.append(filtered_df)
-        standard_diff_tmp_df = tmp_df.loc[tmp_df.index >= DESIRED_PERIOD]
+        standard_diff_tmp_df = tmp_df.loc[
+            (tmp_df.index >= DESIRED_PERIOD)
+            & (tmp_df.index != pd.Timestamp.today().normalize())
+        ]
         if not standard_diff_tmp_df.empty:
+            standard_diff_tmp_df.sort_index(ascending=False, inplace=True)
+            standard_diff_tmp_df = standard_diff_tmp_df.iloc[
+                : min(recent_x, len(standard_diff_tmp_df))
+            ]
             standard_diffs.append(
                 {
                     "馬匹編號": standard_diff_tmp_df["馬匹編號"].values[0],
