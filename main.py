@@ -1,9 +1,9 @@
+import asyncio
 import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import asyncio
 import aiohttp
 import numpy as np
 import pandas as pd
@@ -190,7 +190,7 @@ async def main(date, total_race, racecourse):
 
         for raceno, (dist, track) in enumerate(zip(all_dist, all_track), start=1):
             final_df, avg_df, standard_diff_df = concat_df(
-                Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 3
+                Path(f"data/{formatted_date}/{raceno}"), racecourse, dist, track, 4
             )
             final_df.to_csv(
                 f"{Path(f"data/{formatted_date}/final")}/{raceno}_final.csv"
@@ -220,7 +220,7 @@ async def main(date, total_race, racecourse):
         "Overlaps": overlaps_list,
         "最終排名": None,
         "入位率": None,
-        "Note": None,
+        "Bet": None,
     }
     summary_df = pd.DataFrame(data)
     summary_df = summary_df.set_index("Raceno")
