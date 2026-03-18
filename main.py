@@ -93,6 +93,7 @@ async def main(date, total_race, racecourse):
                     df.loc[df["馬場/跑道/賽道"].str.contains("草地"), "跑道"] = "grass"
                     df.loc[df["馬場/跑道/賽道"].str.contains("全天候"), "跑道"] = "dirt"
 
+                    df["賽事班次"] = df["賽事班次"].str.replace("R", "", regex=False)
                     df.loc[df["賽事班次"].str.contains("G"), "賽事班次"] = "0"
 
                     standard_time_df = pd.read_csv("data/standard_time.csv")
@@ -109,6 +110,7 @@ async def main(date, total_race, racecourse):
                         right_on=["class", "race_course", "distance", "type"],
                         how="left",
                     )
+
                     df.dropna(inplace=True)
                     df["last_section_idx"] = df["途程"].map(idx_map)
                     df["完成時間"] = df["完成時間"].apply(parse_time)
