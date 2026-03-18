@@ -26,7 +26,11 @@ if __name__ == "__main__":
         service=Service(ChromeDriverManager().install()), options=chrome_options
     )
     url = f"https://bet.hkjc.com/ch/racing/wp/2026-03-18/HV/{raceno}"
-    wait = WebDriverWait(driver, 10)
+    wait = WebDriverWait(driver, 60)
+    very_large_win = set()
+    large_win = set()
+    very_large_place = set()
+    large_place = set()
     while True:
         res = driver.get(url)
 
@@ -43,6 +47,7 @@ if __name__ == "__main__":
 
         if Path(f"live_odds/{raceno}.csv").exists():
             df = pd.read_csv(f"live_odds/{raceno}.csv")
+            df.sort_values(by="horse_no", inplace=True)
             win_odds, place_odds, win_amounts, place_amounts = (
                 [],
                 [],
@@ -94,6 +99,26 @@ if __name__ == "__main__":
             )
             df.to_csv(f"live_odds/{raceno}.csv", index=False)
             print(df)
+            for val in df.loc[df["win_amount_increase"] > 1, "horse_no"].values:
+                very_large_win.add(val)
+            for val in df.loc[df["place_amount_increase"] > 1, "horse_no"].values:
+                very_large_place.add(val)
+            for val in df.loc[
+                (df["win_amount_increase"] > 0.5 & df["win_amount_increase"] < 1),
+                "horse_no",
+            ].values:
+                large_win.add(val)
+
+            for val in df.loc[
+                (df["place_amount_increase"] > 0.5 & df["place_amount_increase"] < 1),
+                "horse_no",
+            ].values:
+                large_place.add(val)
+
+            print(f"Very large win: {very_large_win}")
+            print(f"Large win: {large_win}")
+            print(f"Very large place: {very_large_place}")
+            print(f"Large place: {large_place}")
 
         else:
             horses, win_odds, place_odds, win_amounts, place_amounts = (
