@@ -6,326 +6,240 @@ from pathlib import Path
 import pandas as pd
 import requests
 import selenium
+from dotenv import load_dotenv
 from rich import console, print
 from rich.progress import track
 from rich.prompt import IntPrompt, Prompt
 from selenium import webdriver
+from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from tabulate import tabulate
 
-driver = webdriver.Chrome(service=Service())
-wait = WebDriverWait(driver, 600)
-TOKEN = "8759428672:AAHTZ0nY4HKxls2GeGr4CvByn6EU3TSp1XM"
-CHAT_ID = "842065244"
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_API_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 con = console.Console()
 
 
-def overnight(date, racecourse, total_race):
+def process_odds(
+    url: str,
+    driver: WebDriver,
+    wait: WebDriverWait,
+    raceno: str,
+    date: str,
+    fetch_type: str,
+) -> datetime | None:
+
+    res = driver.get(url)
+    win_pool = wait.until(EC.element_to_be_clickable((By.ID, "poolInvWIN")))
+
+    if fetch_type == "live":
+        raceno = driver.current_url.split("/")[-1]
+
     while True:
-        for i in range(1, total_race + 1):
-            url = f"https://bet.hkjc.com/ch/racing/wp/{date}/{racecourse}/{i}"
-            res = driver.get(url)
+        try:
+            win_pool = float(win_pool.text.split()[2].replace(",", ""))
+            break
+        except ValueError as e:
+            print(e)
 
-            win_pool = wait.until(EC.element_to_be_clickable((By.ID, "poolInvWIN")))
-            while True:
-                try:
-                    win_pool = float(win_pool.text.split()[2].replace(",", ""))
-                    break
-                except ValueError as e:
-                    print(e)
+    place_pool = float(
+        driver.find_element(By.ID, "poolInvPLA").text.split()[2].replace(",", "")
+    )
 
-            place_pool = float(
-                driver.find_element(By.ID, "poolInvPLA")
-                .text.split()[2]
-                .replace(",", "")
-            )
+    print(f"As at: {datetime.now().strftime("%H:%M")}")
+    print(f"Win pool investment: {win_pool}")
+    print(f"Place pool investment: {place_pool}")
 
-            print(f"As at: {datetime.now().strftime("%H:%M")}")
-            print(f"Win pool investment: {win_pool}")
-            print(f"Place pool investment: {place_pool}")
+    if Path(f"output/{fetch_type}_odds/{date}/{fetch_type}_{raceno}.csv").exists():
 
-            if Path(f"output/overnight_odds/overnight_{i}.csv").exists():
-
-                df = pd.read_csv(f"output/overnight_odds/overnight_{i}.csv")
-                df.sort_values(by="horse_no", inplace=True)
-                win_odds, place_odds, win_amounts, place_amounts = (
-                    [],
-                    [],
-                    [],
-                    [],
-                )
-                for j in range(1, 15):
-                    try:
-                        horse_name = driver.find_element(
-                            By.ID, f"horseName_{i}_{j}"
-                        ).text
-                        while True:
-                            try:
-                                win_odd = float(
-                                    driver.find_element(By.ID, f"odds_WIN_{i}_{j}").text
-                                )
-                                break
-                            except ValueError as e:
-                                print(e)
-                        place_odd = float(
-                            driver.find_element(By.ID, f"odds_PLA_{i}_{j}").text
-                        )
-                        win_odds.append(win_odd)
-                        place_odds.append(place_odd)
-                        win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
-                        place_amounts.append(
-                            round(0.825 * (1 / place_odd) * place_pool, 2)
-                        )
-
-                        # print(f"{j}: {horse_name}; WIN: {win_odd}; PLACE: {place_odd}")
-                    except selenium.common.exceptions.NoSuchElementException:
-                        break
-
-                df["prev_win_odds"] = df["win_odds"]
-                df["prev_place_odds"] = df["place_odds"]
-                df["prev_win_amount"] = df["win_amount"]
-                df["prev_place_amount"] = df["place_amount"]
-
-                df["win_odds"] = win_odds
-                df["place_odds"] = place_odds
-                df["win_amount"] = win_amounts
-                df["place_amount"] = place_amounts
-
-                df["win_amount_increase"] = df["win_amount"] - df["prev_win_amount"]
-                df["place_amount_increase"] = (
-                    df["place_amount"] - df["prev_place_amount"]
-                )
-
-                df["win_odds_change"] = (df["win_odds"] - df["prev_win_odds"]) / df[
-                    "prev_win_odds"
-                ]
-                df["place_odds_change"] = (
-                    df["place_odds"] - df["prev_place_odds"]
-                ) / df["prev_place_odds"]
-
-                df = df.round(2)
-                df.sort_values(
-                    by=["win_amount_increase", "place_amount_increase"],
-                    ascending=False,
-                    inplace=True,
-                )
-                df = df[
-                    [
-                        "horse_no",
-                        "horses",
-                        "win_odds",
-                        "prev_win_odds",
-                        "win_odds_change",
-                        "win_amount",
-                        "prev_win_amount",
-                        "win_amount_increase",
-                        "place_odds",
-                        "prev_place_odds",
-                        "place_odds_change",
-                        "place_amount",
-                        "prev_place_amount",
-                        "place_amount_increase",
-                    ]
-                ]
-                df.to_csv(f"output/overnight_odds/overnight_{i}.csv", index=False)
-                message = f"R{i}\nWin: {df.iloc[:4]["horse_no"].to_list()} \nPlace: {df.sort_values("place_amount_increase", ascending=False).iloc[:4]["horse_no"].to_list()}"
-                send_telegram_message(message)
-
-            else:
-                total = 15
-                horses, win_odds, place_odds, win_amounts, place_amounts = (
-                    [],
-                    [],
-                    [],
-                    [],
-                    [],
-                )
-                for j in range(1, 15):
-                    try:
-                        horse_name = driver.find_element(
-                            By.ID, f"horseName_{i}_{j}"
-                        ).text
-                        win_odd = float(
-                            driver.find_element(By.ID, f"odds_WIN_{i}_{j}").text
-                        )
-                        place_odd = float(
-                            driver.find_element(By.ID, f"odds_PLA_{i}_{j}").text
-                        )
-                        horses.append(horse_name)
-                        win_odds.append(win_odd)
-                        place_odds.append(place_odd)
-                        win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
-                        place_amounts.append(
-                            round(0.825 * (1 / place_odd) * place_pool, 2)
-                        )
-
-                        print(f"{j}: {horse_name}; WIN: {win_odd}; PLACE: {place_odd}")
-                    except selenium.common.exceptions.NoSuchElementException:
-                        total = j
-                        break
-
-                df = pd.DataFrame(
-                    {
-                        "horse_no": range(1, total),
-                        "horses": horses,
-                        "win_odds": win_odds,
-                        "win_amount": win_amounts,
-                        "place_odds": place_odds,
-                        "place_amount": place_amounts,
-                    }
-                )
-                df.to_csv(f"output/overnight_odds/overnight_{i}.csv", index=False)
-                send_telegram_message(df.to_string())
-        for i in track(range(15), description="Waiting"):
-            time.sleep(1)
-
-
-def live():
-    raceno = input("raceno: ")
-
-    url = f"https://bet.hkjc.com/ch/racing/wp/2026-03-18/HV/{raceno}"
-    wait = WebDriverWait(driver, 60)
-    very_large_win = set()
-    large_win = set()
-    very_large_place = set()
-    large_place = set()
-    while True:
-        res = driver.get(url)
-
-        win_pool = wait.until(EC.element_to_be_clickable((By.ID, "poolInvWIN")))
-
-        win_pool = float(win_pool.text.split()[2].replace(",", ""))
-
-        place_pool = float(
-            driver.find_element(By.ID, "poolInvPLA").text.split()[2].replace(",", "")
+        df = pd.read_csv(f"output/{fetch_type}_odds/{date}/{fetch_type}_{raceno}.csv")
+        df.sort_values(by="horse_no", inplace=True)
+        win_odds, place_odds, win_amounts, place_amounts = (
+            [],
+            [],
+            [],
+            [],
         )
-        print(f"As at: {datetime.now().strftime("%H:%M")}")
-        print(f"Win pool investment: {win_pool}")
-        print(f"Place pool investment: {place_pool}")
+        for j in range(1, 15):
+            try:
+                while True:
+                    try:
+                        horse_name = driver.find_element(
+                            By.ID, f"horseName_{raceno}_{j}"
+                        ).text
+                        break
+                    except ValueError as e:
+                        print(e)
 
-        if Path(f"live_odds/{raceno}.csv").exists():
-            df = pd.read_csv(f"live_odds/{raceno}.csv")
-            df.sort_values(by="horse_no", inplace=True)
-            win_odds, place_odds, win_amounts, place_amounts = (
-                [],
-                [],
-                [],
-                [],
-            )
-            for i in range(1, 14):
-                try:
-                    horse_name = driver.find_element(
-                        By.ID, f"horseName_{raceno}_{i}"
-                    ).text
-                    win_odd = float(
-                        driver.find_element(By.ID, f"odds_WIN_{raceno}_{i}").text
-                    )
-                    place_odd = float(
-                        driver.find_element(By.ID, f"odds_PLA_{raceno}_{i}").text
-                    )
-                    win_odds.append(win_odd)
-                    place_odds.append(place_odd)
-                    win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
-                    place_amounts.append(round(0.825 * (1 / place_odd) * place_pool, 2))
+                win_odd_text = driver.find_element(By.ID, f"odds_WIN_{raceno}_{j}").text
+                if win_odd_text == "退出":
+                    # win_odds.append(None)
+                    # place_odds.append(None)
+                    # win_amounts.append(None)
+                    # place_amounts.append(None)
+                    continue
 
-                    print(f"{i}: {horse_name}; WIN: {win_odd}; PLACE: {place_odd}")
-                except selenium.common.exceptions.NoSuchElementException:
-                    break
+                win_odd = float(win_odd_text)
 
-            df["prev_win_odds"] = df["win_odds"]
-            df["prev_place_odds"] = df["place_odds"]
-            df["prev_win_amount"] = df["win_amount"]
-            df["prev_place_amount"] = df["place_amount"]
+                place_odd = float(
+                    driver.find_element(By.ID, f"odds_PLA_{raceno}_{j}").text
+                )
+                win_odds.append(win_odd)
+                place_odds.append(place_odd)
+                win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
+                place_amounts.append(round(0.825 * (1 / place_odd) * place_pool, 2))
 
-            df["win_odds"] = win_odds
-            df["place_odds"] = place_odds
-            df["win_amount"] = win_amounts
-            df["place_amount"] = place_amounts
+            except selenium.common.exceptions.NoSuchElementException:
+                break
 
-            df["win_amount_increase"] = (df["win_amount"] - df["prev_win_amount"]) / df[
-                "prev_win_amount"
+        df["prev_win_odds"] = df["win_odds"]
+        df["prev_place_odds"] = df["place_odds"]
+        df["prev_win_amount"] = df["win_amount"]
+        df["prev_place_amount"] = df["place_amount"]
+
+        df["win_odds"] = win_odds
+        df["place_odds"] = place_odds
+        df["win_amount"] = win_amounts
+        df["place_amount"] = place_amounts
+
+        df["win_amount_increase"] = df["win_amount"] - df["prev_win_amount"]
+        df["place_amount_increase"] = df["place_amount"] - df["prev_place_amount"]
+
+        df["win_odds_change"] = (df["win_odds"] - df["prev_win_odds"]) / df[
+            "prev_win_odds"
+        ]
+        df["place_odds_change"] = (df["place_odds"] - df["prev_place_odds"]) / df[
+            "prev_place_odds"
+        ]
+
+        df.dropna(inplace=True)
+        df = df.round(2)
+        df.sort_values(
+            by=["win_amount_increase", "place_amount_increase"],
+            ascending=False,
+            inplace=True,
+        )
+        df = df[
+            [
+                "horse_no",
+                "horses",
+                "win_odds",
+                "prev_win_odds",
+                "win_odds_change",
+                "win_amount",
+                "prev_win_amount",
+                "win_amount_increase",
+                "place_odds",
+                "prev_place_odds",
+                "place_odds_change",
+                "place_amount",
+                "prev_place_amount",
+                "place_amount_increase",
             ]
-            df["place_amount_increase"] = (
-                df["place_amount"] - df["prev_place_amount"]
-            ) / df["prev_place_amount"]
+        ]
+        df.to_csv(
+            f"output/{fetch_type}_odds/{date}/{fetch_type}_{raceno}.csv", index=False
+        )
+        message = f"R{raceno}\nWin: {df.iloc[:4]["horse_no"].to_list()} \nPlace: {df.sort_values("place_amount_increase", ascending=False).iloc[:4]["horse_no"].to_list()}"
+        send_telegram_message(message)
 
-            df = df.round(2)
-            df.sort_values(
-                by=["win_amount_increase", "place_amount_increase"],
-                ascending=False,
-                inplace=True,
-            )
-            df.to_csv(f"live_odds/{raceno}.csv", index=False)
-            print(df)
-            for val in df.loc[df["win_amount_increase"] > 1, "horse_no"].values:
-                very_large_win.add(int(val))
-            for val in df.loc[df["place_amount_increase"] > 1, "horse_no"].values:
-                very_large_place.add(int(val))
-            for val in df.loc[
-                (df["win_amount_increase"] > 0.5) & (df["win_amount_increase"] < 1),
-                "horse_no",
-            ].values:
-                large_win.add(int(val))
+    else:
+        total = 15
+        horses, win_odds, place_odds, win_amounts, place_amounts = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        for j in range(1, 15):
+            try:
+                horse_name = driver.find_element(By.ID, f"horseName_{raceno}_{j}").text
+                win_odd = float(
+                    driver.find_element(By.ID, f"odds_WIN_{raceno}_{j}").text
+                )
+                place_odd = float(
+                    driver.find_element(By.ID, f"odds_PLA_{raceno}_{j}").text
+                )
+                horses.append(horse_name)
+                win_odds.append(win_odd)
+                place_odds.append(place_odd)
+                win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
+                place_amounts.append(round(0.825 * (1 / place_odd) * place_pool, 2))
 
-            for val in df.loc[
-                (df["place_amount_increase"] > 0.5) & (df["place_amount_increase"] < 1),
-                "horse_no",
-            ].values:
-                large_place.add(int(val))
+                print(f"{j}: {horse_name}; WIN: {win_odd}; PLACE: {place_odd}")
+            except selenium.common.exceptions.NoSuchElementException:
+                total = j
+                break
 
-            print(f"Very large win: {very_large_win}")
-            print(f"Large win: {large_win}")
-            print(f"Very large place: {very_large_place}")
-            print(f"Large place: {large_place}")
+        df = pd.DataFrame(
+            {
+                "horse_no": range(1, total),
+                "horses": horses,
+                "win_odds": win_odds,
+                "win_amount": win_amounts,
+                "place_odds": place_odds,
+                "place_amount": place_amounts,
+            }
+        )
+        df.dropna(inplace=True)
+        df.sort_values("win_amount", ascending=False, inplace=True)
+        df.to_csv(
+            f"output/{fetch_type}_odds/{date}/{fetch_type}_{raceno}.csv", index=False
+        )
+        message = f"R{raceno}\nWin: {df.iloc[:4]["horse_no"].to_list()} \nPlace: {df.sort_values("place_amount", ascending=False).iloc[:4]["horse_no"].to_list()}"
+        send_telegram_message(message)
 
-        else:
-            horses, win_odds, place_odds, win_amounts, place_amounts = (
-                [],
-                [],
-                [],
-                [],
-                [],
-            )
-            for i in range(1, 14):
-                try:
-                    horse_name = driver.find_element(
-                        By.ID, f"horseName_{raceno}_{i}"
-                    ).text
-                    win_odd = float(
-                        driver.find_element(By.ID, f"odds_WIN_{raceno}_{i}").text
-                    )
-                    place_odd = float(
-                        driver.find_element(By.ID, f"odds_PLA_{raceno}_{i}").text
-                    )
+    if fetch_type == "live":
+        race_time = (
+            driver.find_element(By.CLASS_NAME, "meeting-info-content-text")
+            .text.split(",")[1]
+            .strip()
+        )
+        race_time = datetime.strptime(race_time, "%H:%M")
+        return race_time
+    else:
+        return None
 
-                    print(f"{i}: {horse_name}; WIN: {win_odd}; PLACE: {place_odd}")
 
-                    horses.append(horse_name)
-                    win_odds.append(win_odd)
-                    place_odds.append(place_odd)
-                    win_amounts.append(round(0.825 * (1 / win_odd) * win_pool, 2))
-                    place_amounts.append(round(0.825 * (1 / place_odd) * place_pool, 2))
-                except selenium.common.exceptions.NoSuchElementException:
-                    total = i
-                    break
+def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
 
-            df = pd.DataFrame(
-                {
-                    "horse_no": range(1, total),
-                    "horses": horses,
-                    "win_odds": win_odds,
-                    "win_amount": win_amounts,
-                    "place_odds": place_odds,
-                    "place_amount": place_amounts,
-                }
-            )
-            df.to_csv(f"live_odds/{raceno}.csv", index=False)
+    formatted_date = date.replace("-", "")
+    Path(f"output/{fetch_type}_odds/{formatted_date}").mkdir(exist_ok=True)
+    if fetch_type == "overnight":
+        for i in range(6, total_race + 1):
+            url = f"https://bet.hkjc.com/ch/racing/wp/{date}/{racecourse}/{i}"
+            process_odds(url, driver, wait, i, formatted_date, fetch_type)
+    else:
+        while True:
+            now = datetime.now()
 
-        time.sleep(60)
+            url = f"https://bet.hkjc.com/ch/racing/wp/"
+            race_time = process_odds(url, driver, wait, 0, formatted_date, fetch_type)
+
+            race_time = race_time.replace(year=now.year, month=now.month, day=now.day)
+            diff = race_time - now
+            total_seconds = abs(diff.total_seconds())
+            total_minutes = total_seconds / 60
+
+            # 30 - 5 minutes before match
+            if total_minutes > 5:
+                freq = 5 * 60
+            # 5 - 1 minutes before match
+            elif total_minutes > 1:
+                freq = 60
+            # 1 minutes - before start of match
+            elif total_minutes < 1 and total_minutes > -3:
+                freq = 10
+            else:
+                freq = 60
+
+            for i in track(range(freq), description="Waiting"):
+                time.sleep(1)
 
 
 def send_telegram_message(message):
@@ -341,13 +255,12 @@ def send_telegram_message(message):
 
 
 if __name__ == "__main__":
-    script_dir = Path(__file__).resolve().parent
-    os.chdir(script_dir)
-    # date = Prompt.ask("Race date (yyyy-mm-dd)")
-    # racecourse = Prompt.ask("Racecourse", choices=["ST", "HV"])
-    # total_race = IntPrompt.ask("Total no. of races")
+    date = Prompt.ask("Race date (yyyy-mm-dd)")
+    racecourse = Prompt.ask("Racecourse", choices=["ST", "HV"])
+    total_race = IntPrompt.ask("Total no. of races")
+    fetch_type = Prompt.ask("Fetch type", choices=["live", "overnight"])
 
-    date = "2026-03-22"
-    racecourse = "ST"
-    total_race = 10
-    overnight(date, racecourse, total_race)
+    driver = webdriver.Chrome(service=Service())
+    wait = WebDriverWait(driver, 600)
+
+    fetch_odds(fetch_type, date, racecourse, total_race, driver, wait)
