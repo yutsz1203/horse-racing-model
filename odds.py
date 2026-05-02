@@ -38,7 +38,7 @@ def safe_get(driver, url, locator, timeout=20):
 WIN_POOL_MIN = 0  # Minimum total win pool to trust the signal
 PLACE_POOL_MIN = 0  # Minimum total place pool
 HORSE_INFLOW_MIN = 0  # Minimum dollar inflow per horse per window
-FLOW_RATIO_MIN = 2  # Horse must capture late money at >=1.5x its prior share
+FLOW_RATIO_MIN = 1.4  # Horse must capture late money at >=1.5x its prior share
 
 
 def process_odds(
@@ -54,6 +54,8 @@ def process_odds(
 
     if fetch_type == "live":
         raceno = driver.current_url.split("/")[-1]
+
+    _wait_for_odds_loaded(driver, raceno)
 
     while True:
         try:
@@ -256,12 +258,8 @@ def process_odds(
         flagged_win = df[df["win_flagged"]]["horse_no"].to_list()
         flagged_place = df[df["place_flagged"]]["horse_no"].to_list()
 
-        message = (
-            f"R{raceno}\n"
-            f"Average: {filtered_df.iloc[:4]['horse_no'].to_list()}\n"
-            f"Win: {filtered_df.sort_values('win_odds_change').iloc[:4]['horse_no'].to_list()}\n"
-            f"Place: {filtered_df.sort_values('place_odds_change').iloc[:4]['horse_no'].to_list()}"
-        )
+        message = ""
+
         if flagged_win:
             # Include flow ratio for context
             ratios = filtered_df[filtered_df["win_flagged"]][
@@ -282,6 +280,12 @@ def process_odds(
             )
             message += f"\n🔥 Disprop. Place flow: {ratio_str}"
 
+        message += (
+            f"R{raceno}\n"
+            f"Average: {filtered_df.iloc[:4]['horse_no'].to_list()}\n"
+            f"Win: {filtered_df.sort_values('win_odds_change').iloc[:4]['horse_no'].to_list()}\n"
+            f"Place: {filtered_df.sort_values('place_odds_change').iloc[:4]['horse_no'].to_list()}"
+        )
         print(message)
         send_telegram_message(message)
 
@@ -401,6 +405,19 @@ def _sleep_until(target: datetime) -> None:
         time.sleep(leftover)
 
 
+def _wait_for_odds_loaded(driver, raceno, timeout=20):
+    def any_odds_ready(d):
+        for j in range(1, 15):
+            try:
+                if d.find_element(By.ID, f"odds_WIN_{raceno}_{j}").text.strip():
+                    return True
+            except selenium.common.exceptions.NoSuchElementException:
+                continue
+        return False
+
+    WebDriverWait(driver, timeout).until(any_odds_ready)
+
+
 def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
 
     formatted_date = date.replace("-", "")
@@ -418,15 +435,15 @@ def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
 
     while True:
         curr_raceno, race_time = _get_race_info(url, driver)
-        if curr_raceno == total_race:
-            print(f"All {total_race} matches are finished.")
-            break
 
         if curr_raceno == prev_raceno:
             for i in track(
                 range(60),
                 description=f"Waiting for R{curr_raceno} to wrap up...",
             ):
+                if curr_raceno == total_race:
+                    print(f"All {total_race} matches are finished.")
+                    return
                 time.sleep(1)
             continue
 
@@ -454,9 +471,9 @@ def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
 
             # Pick interval based on which tier we're in
             if now < tier_switch:
-                interval_min = 10  # 30-10 min before race
+                interval_min = 15  # 30-10 min before race
             else:
-                interval_min = 5  # 10-0 min before race
+                interval_min = 10  # 10-0 min before race
 
             next_boundary = _next_aligned_boundary(now, interval_min)
 
@@ -500,4 +517,7 @@ if __name__ == "__main__":
     driver = webdriver.Chrome(service=Service())
     wait = WebDriverWait(driver, 600)
 
-    fetch_odds(fetch_type, date, racecourse, total_race, driver, wait)
+    try:
+        fetch_odds(fetch_type, date, racecourse, total_race, driver, wait)
+    except Exception as e:
+        send_telegram_message(e)

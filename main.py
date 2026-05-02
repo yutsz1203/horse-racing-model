@@ -42,149 +42,149 @@ async def main(date, total_race, racecourse):
         race_card_results = await asyncio.gather(*race_card_tasks)
         all_home_pages, all_racecard_df, all_track, all_dist = zip(*race_card_results)
 
-        # raceno = 1
-        # for home_pages, racecard_df in zip(all_home_pages, all_racecard_df):
-        #     home_page_tasks = [
-        #         fetch_home_page(session, home_page) for home_page in home_pages
-        #     ]
-        #     home_page_results = await asyncio.gather(*home_page_tasks)
+        raceno = 1
+        for home_pages, racecard_df in zip(all_home_pages, all_racecard_df):
+            home_page_tasks = [
+                fetch_home_page(session, home_page) for home_page in home_pages
+            ]
+            home_page_results = await asyncio.gather(*home_page_tasks)
 
-        #     all_indv_matches, all_indv_df = zip(*home_page_results)
+            all_indv_matches, all_indv_df = zip(*home_page_results)
 
-        #     for horse, horseno, indv_matches, indv_df in zip(
-        #         racecard_df["馬名"].values,
-        #         racecard_df["馬匹編號"].values,
-        #         all_indv_matches,
-        #         all_indv_df,
-        #     ):
-        #         if "退出" in horse:
-        #             continue
+            for horse, horseno, indv_matches, indv_df in zip(
+                racecard_df["馬名"].values,
+                racecard_df["馬匹編號"].values,
+                all_indv_matches,
+                all_indv_df,
+            ):
+                if "退出" in horse:
+                    continue
 
-        #         print(f"Processing {horse} match history...")
+                print(f"Processing {horse} match history...")
 
-        #         if indv_matches:
-        #             df = indv_df.copy()
-        #             df.drop(
-        #                 columns=["評分", "練馬師", "頭馬距離", "獨贏賠率", "配備"],
-        #                 inplace=True,
-        #             )
-        #             sectional_time_tasks = [
-        #                 fetch_sectional_time(session, indv_match, horse, df)
-        #                 for indv_match in indv_matches
-        #             ]
-        #             sectional_time_result = await asyncio.gather(*sectional_time_tasks)
+                if indv_matches:
+                    df = indv_df.copy()
+                    df.drop(
+                        columns=["評分", "練馬師", "頭馬距離", "獨贏賠率", "配備"],
+                        inplace=True,
+                    )
+                    sectional_time_tasks = [
+                        fetch_sectional_time(session, indv_match, horse, df)
+                        for indv_match in indv_matches
+                    ]
+                    sectional_time_result = await asyncio.gather(*sectional_time_tasks)
 
-        #             df = sectional_time_result[0]
+                    df = sectional_time_result[0]
 
-        #             df["馬名"] = horse
-        #             df["馬匹編號"] = horseno
-        #             df["今仗檔位"] = racecard_df.loc[
-        #                 racecard_df["馬名"] == horse, "檔位"
-        #             ].iloc[0]
-        #             df["今仗騎師"] = racecard_df.loc[
-        #                 racecard_df["馬名"] == horse, "騎師"
-        #             ].iloc[0]
-        #             df["今仗負磅"] = racecard_df.loc[
-        #                 racecard_df["馬名"] == horse, "負磅"
-        #             ].iloc[0]
+                    df["馬名"] = horse
+                    df["馬匹編號"] = horseno
+                    df["今仗檔位"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "檔位"
+                    ].iloc[0]
+                    df["今仗騎師"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "騎師"
+                    ].iloc[0]
+                    df["今仗負磅"] = racecard_df.loc[
+                        racecard_df["馬名"] == horse, "負磅"
+                    ].iloc[0]
 
-        #             df.loc[df["馬場/跑道/賽道"].str.contains("跑馬地"), "馬場"] = "HV"
-        #             df.loc[df["馬場/跑道/賽道"].str.contains("沙田"), "馬場"] = "ST"
-        #             df.loc[df["馬場/跑道/賽道"].str.contains("草地"), "跑道"] = "grass"
-        #             df.loc[df["馬場/跑道/賽道"].str.contains("全天候"), "跑道"] = "dirt"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("跑馬地"), "馬場"] = "HV"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("沙田"), "馬場"] = "ST"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("草地"), "跑道"] = "grass"
+                    df.loc[df["馬場/跑道/賽道"].str.contains("全天候"), "跑道"] = "dirt"
 
-        #             df["賽事班次"] = df["賽事班次"].str.replace("R", "", regex=False)
-        #             df.loc[df["賽事班次"].str.contains("G"), "賽事班次"] = "0"
+                    df["賽事班次"] = df["賽事班次"].str.replace("R", "", regex=False)
+                    df.loc[df["賽事班次"].str.contains("G"), "賽事班次"] = "0"
 
-        #             standard_time_df = pd.read_csv("data/standard_time.csv")
-        #             standard_time_df["total_time"] = standard_time_df[
-        #                 "total_time"
-        #             ].apply(parse_time)
-        #             standard_time_df = standard_time_df.astype(
-        #                 {"class": "str", "distance": "str"}
-        #             )
+                    standard_time_df = pd.read_csv("data/standard_time.csv")
+                    standard_time_df["total_time"] = standard_time_df[
+                        "total_time"
+                    ].apply(parse_time)
+                    standard_time_df = standard_time_df.astype(
+                        {"class": "str", "distance": "str"}
+                    )
 
-        #             df = df.merge(
-        #                 standard_time_df,
-        #                 left_on=["賽事班次", "馬場", "途程", "跑道"],
-        #                 right_on=["class", "race_course", "distance", "type"],
-        #                 how="left",
-        #             )
+                    df = df.merge(
+                        standard_time_df,
+                        left_on=["賽事班次", "馬場", "途程", "跑道"],
+                        right_on=["class", "race_course", "distance", "type"],
+                        how="left",
+                    )
 
-        #             df.dropna(inplace=True)
-        #             df["last_section_idx"] = df["途程"].map(idx_map)
-        #             df["完成時間"] = df["完成時間"].apply(parse_time)
-        #             df["該仗步速"] = df["該仗步速"].apply(parse_time)
+                    df.dropna(inplace=True)
+                    df["last_section_idx"] = df["途程"].map(idx_map)
+                    df["完成時間"] = df["完成時間"].apply(parse_time)
+                    df["該仗步速"] = df["該仗步速"].apply(parse_time)
 
-        #             col_indices = (df["last_section_idx"] + 28).astype(int).values
+                    col_indices = (df["last_section_idx"] + 28).astype(int).values
 
-        #             row_indices = np.arange(len(df))
-        #             df["該仗頭段"] = round(df["完成時間"] - df["該仗末段"], 2)
-        #             df["比標準頭段"] = round(
-        #                 df["該仗頭段"]
-        #                 - (df["total_time"] - df.values[row_indices, col_indices]),
-        #                 2,
-        #             )
-        #             df["比標準末段"] = round(
-        #                 df["該仗末段"] - df.values[row_indices, col_indices], 2
-        #             )
-        #             df["比標準時間"] = round(df["完成時間"] - df["total_time"], 2)
-        #             df["前段位置"] = pd.to_numeric(
-        #                 df["沿途走位"].str.split().str[0], errors="coerce"
-        #             ).astype("Int64")
+                    row_indices = np.arange(len(df))
+                    df["該仗頭段"] = round(df["完成時間"] - df["該仗末段"], 2)
+                    df["比標準頭段"] = round(
+                        df["該仗頭段"]
+                        - (df["total_time"] - df.values[row_indices, col_indices]),
+                        2,
+                    )
+                    df["比標準末段"] = round(
+                        df["該仗末段"] - df.values[row_indices, col_indices], 2
+                    )
+                    df["比標準時間"] = round(df["完成時間"] - df["total_time"], 2)
+                    df["前段位置"] = pd.to_numeric(
+                        df["沿途走位"].str.split().str[0], errors="coerce"
+                    ).astype("Int64")
 
-        #             cols_to_drop = list(standard_time_df.columns) + [
-        #                 "last_section_idx",
-        #             ]
-        #             df.drop(
-        #                 columns=cols_to_drop,
-        #                 inplace=True,
-        #             )
-        #             df = df.rename(
-        #                 columns={
-        #                     "檔位": "上仗檔位",
-        #                     "騎師": "上仗騎師",
-        #                     "實際負磅": "上仗負磅",
-        #                 }
-        #             )
-        #             df = df[
-        #                 [
-        #                     "馬場",
-        #                     "跑道",
-        #                     "場地狀況",
-        #                     "途程",
-        #                     "場次",
-        #                     "日期",
-        #                     "名次",
-        #                     "馬名",
-        #                     "馬匹編號",
-        #                     "今仗檔位",
-        #                     "上仗檔位",
-        #                     "該仗步速",
-        #                     "該仗頭段",
-        #                     "比標準頭段",
-        #                     "該仗末段",
-        #                     "比標準末段",
-        #                     "完成時間",
-        #                     "比標準時間",
-        #                     "前段位置",
-        #                     "第一名",
-        #                     "第二名",
-        #                     "第三名",
-        #                     "上仗騎師",
-        #                     "今仗騎師",
-        #                     "賽事班次",
-        #                     "上仗負磅",
-        #                     "今仗負磅",
-        #                 ]
-        #             ]
-        #             df["日期"] = pd.to_datetime(
-        #                 df["日期"], dayfirst=True, format="%d/%m/%Y"
-        #             )
-        #             df.set_index("日期", inplace=True)
-        #             df.to_csv(f"data/{formatted_date}/{raceno}/{horse}.csv")
+                    cols_to_drop = list(standard_time_df.columns) + [
+                        "last_section_idx",
+                    ]
+                    df.drop(
+                        columns=cols_to_drop,
+                        inplace=True,
+                    )
+                    df = df.rename(
+                        columns={
+                            "檔位": "上仗檔位",
+                            "騎師": "上仗騎師",
+                            "實際負磅": "上仗負磅",
+                        }
+                    )
+                    df = df[
+                        [
+                            "馬場",
+                            "跑道",
+                            "場地狀況",
+                            "途程",
+                            "場次",
+                            "日期",
+                            "名次",
+                            "馬名",
+                            "馬匹編號",
+                            "今仗檔位",
+                            "上仗檔位",
+                            "該仗步速",
+                            "該仗頭段",
+                            "比標準頭段",
+                            "該仗末段",
+                            "比標準末段",
+                            "完成時間",
+                            "比標準時間",
+                            "前段位置",
+                            "第一名",
+                            "第二名",
+                            "第三名",
+                            "上仗騎師",
+                            "今仗騎師",
+                            "賽事班次",
+                            "上仗負磅",
+                            "今仗負磅",
+                        ]
+                    ]
+                    df["日期"] = pd.to_datetime(
+                        df["日期"], dayfirst=True, format="%d/%m/%Y"
+                    )
+                    df.set_index("日期", inplace=True)
+                    df.to_csv(f"data/{formatted_date}/{raceno}/{horse}.csv")
 
-        #     raceno += 1
+            raceno += 1
 
         avg_horses_list, fastest_horses_list, diff_horses_list, overlaps_list = (
             [],
@@ -473,13 +473,6 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
                     "完成時間": filtered_df["完成時間"].mean().round(2),
                 }
             )
-            pace.append(
-                {
-                    "馬匹編號": filtered_df["馬匹編號"].values[0],
-                    "馬名": filtered_df["馬名"].values[0],
-                    "前段位置中位數": filtered_df["前段位置"].median().astype(int),
-                }
-            )
 
         all_dfs.append(filtered_df)
         standard_diff_tmp_df = tmp_df.loc[
@@ -498,6 +491,15 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
                     "平均比標準時間": standard_diff_tmp_df["比標準時間"]
                     .mean()
                     .round(2),
+                }
+            )
+            pace.append(
+                {
+                    "馬匹編號": standard_diff_tmp_df["馬匹編號"].values[0],
+                    "馬名": standard_diff_tmp_df["馬名"].values[0],
+                    "前段位置中位數": standard_diff_tmp_df["前段位置"]
+                    .median()
+                    .astype(int),
                 }
             )
 
@@ -522,6 +524,8 @@ def concat_df(dir: Path, racecourse, dist, track, recent_x):
     if pace:
         pace_df = pd.DataFrame(pace)
         pace_df.sort_values(by="前段位置中位數", inplace=True)
+    else:
+        pace_df = pd.DataFrame()
 
     return final_df, avg_df, standard_diff_df, pace_df
 
