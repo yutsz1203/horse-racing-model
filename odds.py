@@ -269,7 +269,7 @@ def process_odds(
                 f"#{r['horse_no']}({r['win_flow_ratio']:.2f}x)"
                 for _, r in ratios.iterrows()
             )
-            message += f"\n🔥 Disprop. Win flow: {ratio_str}"
+            message += f"\n🔥 Disprop. Win flow: {ratio_str}\n"
         if flagged_place:
             ratios = filtered_df[filtered_df["place_flagged"]][
                 ["horse_no", "place_flow_ratio"]
@@ -278,7 +278,7 @@ def process_odds(
                 f"#{r['horse_no']}({r['place_flow_ratio']:.2f}x)"
                 for _, r in ratios.iterrows()
             )
-            message += f"\n🔥 Disprop. Place flow: {ratio_str}"
+            message += f"\n🔥 Disprop. Place flow: {ratio_str}\n"
 
         message += (
             f"R{raceno}\n"
@@ -355,7 +355,7 @@ def process_odds(
         message = (
             f"R{raceno}\n"
             f"Win: {df.iloc[:4]['horse_no'].to_list()}\n"
-            f"Place: {df.sort_values('place_amount', ascending=False).iloc[:4]['horse_no'].to_list()}"
+            f"Place: {df.sort_values('place_amount', ascending=False).iloc[:4]['horse_no'].to_list()}\n"
         )
         send_telegram_message(message)
 
@@ -379,7 +379,8 @@ def _get_race_info(url: str, driver: WebDriver) -> tuple[int, datetime]:
     )
     race_time = datetime.strptime(race_time, "%H:%M")
     race_no = int(driver.current_url.split("/")[-1])
-    return race_no, race_time
+    racecourse_code = driver.current_url.split("/")[-2]
+    return race_no, race_time, racecourse_code
 
 
 def _next_aligned_boundary(now: datetime, interval_min: int) -> datetime:
@@ -434,7 +435,15 @@ def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
     prev_raceno = 0
 
     while True:
-        curr_raceno, race_time = _get_race_info(url, driver)
+        curr_raceno, race_time, racecourse_code = _get_race_info(url, driver)
+
+        if racecourse_code != racecourse:
+            for i in track(
+                range(300),
+                description="Waiting for international match to wrap up...",
+            ):
+                time.sleep(1)
+            continue
 
         if curr_raceno == prev_raceno:
             for i in track(
@@ -447,21 +456,19 @@ def fetch_odds(fetch_type, date, racecourse, total_race, driver, wait):
                 time.sleep(1)
             continue
 
-        now = datetime.now()
-        race_time = race_time.replace(year=now.year, month=now.month, day=now.day)
-        # Guard for late-night scraping of next-day races
-        if race_time < now - timedelta(hours=12):
-            race_time += timedelta(days=1)
-        final_shot_time = race_time + timedelta(seconds=30)
-        tier_switch = race_time - timedelta(minutes=10)
-
-        print(f"Race scheduled at: {race_time.strftime('%H:%M:%S')}")
-        print(f"Switch to 5-min tier at: {tier_switch.strftime('%H:%M:%S')}")
-        print(f"Final snapshot at: {final_shot_time.strftime('%H:%M:%S')}")
-
         while True:
-
+            curr_raceno, race_time, racecourse_code = _get_race_info(url, driver)
             now = datetime.now()
+            race_time = race_time.replace(year=now.year, month=now.month, day=now.day)
+            # Guard for late-night scraping of next-day races
+            if race_time < now - timedelta(hours=12):
+                race_time += timedelta(days=1)
+            final_shot_time = race_time + timedelta(seconds=30)
+            tier_switch = race_time - timedelta(minutes=10)
+
+            print(f"Race scheduled at: {race_time.strftime('%H:%M:%S')}")
+            print(f"Switch to 5-min tier at: {tier_switch.strftime('%H:%M:%S')}")
+            print(f"Final snapshot at: {final_shot_time.strftime('%H:%M:%S')}")
 
             if now >= race_time:
                 _sleep_until(final_shot_time)
@@ -508,11 +515,6 @@ if __name__ == "__main__":
     racecourse = Prompt.ask("Racecourse", choices=["ST", "HV"])
     total_race = IntPrompt.ask("Total no. of races")
     fetch_type = Prompt.ask("Fetch type", choices=["live", "overnight"])
-
-    # date = "2026-03-29"
-    # racecourse = "ST"
-    # total_race = 11
-    # fetch_type = "live"
 
     driver = webdriver.Chrome(service=Service())
     wait = WebDriverWait(driver, 600)
