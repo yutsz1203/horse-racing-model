@@ -43,6 +43,7 @@ async def main(date, total_race, racecourse):
         all_home_pages, all_racecard_df, all_track, all_dist = zip(*race_card_results)
 
         raceno = 1
+        debut_horses = []
         for home_pages, racecard_df in zip(all_home_pages, all_racecard_df):
             home_page_tasks = [
                 fetch_home_page(session, home_page) for home_page in home_pages
@@ -50,6 +51,8 @@ async def main(date, total_race, racecourse):
             home_page_results = await asyncio.gather(*home_page_tasks)
 
             all_indv_matches, all_indv_df = zip(*home_page_results)
+
+            debutants = 0
 
             for horse, horseno, indv_matches, indv_df in zip(
                 racecard_df["馬名"].values,
@@ -183,7 +186,10 @@ async def main(date, total_race, racecourse):
                     )
                     df.set_index("日期", inplace=True)
                     df.to_csv(f"data/{formatted_date}/{raceno}/{horse}.csv")
-
+                else:
+                    debutants += 1
+            print(f"Race: {raceno}; Debutants: {debutants}")
+            debut_horses.append(debutants)
             raceno += 1
 
         avg_horses_list, fastest_horses_list, diff_horses_list, overlaps_list = (
@@ -225,13 +231,14 @@ async def main(date, total_race, racecourse):
                 fastest_horses_list.append([])
                 diff_horses_list.append([])
                 overlaps_list.append([])
+
     data = {
         "Raceno": list(range(1, total_race + 1)),
         "Average": avg_horses_list,
         "Fastest": fastest_horses_list,
         "Standard Diff": diff_horses_list,
         "Overlaps": overlaps_list,
-        "Overnight": None,
+        "Debut_horses": debut_horses,
         "最終排名": None,
         "入位率": None,
         "Bet": None,
